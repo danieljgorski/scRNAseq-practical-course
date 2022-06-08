@@ -1,0 +1,439 @@
+## Introduction----
+# Lab 2 - Analysis of Farbehi et al. 2019
+# Using Seurat, we will re-cluster the data published in Farbehi et al. 2019. 
+# This study consists of single-cell RNA sequencing of murine cardiac tissue 3 and 7 days after myocardial infarction.   
+# Farbehi et al. 2019 - https://elifesciences.org/articles/43882  
+# Seurat - https://satijalab.org/seurat/   
+  
+## Load libraries----
+library(Seurat) # Version 4.0.1 or later
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(readr)
+library(readxl)
+library(limma)
+
+## Check directory---- 
+getwd()
+# setwd("path/to/your/data")
+
+## Load in 10x data and create a Seurat object----
+
+# Here is an example of loading in data from a typical 10x Genomics cellranger pipeline,
+# this is generally what you would recieve from a core facility after sequencing, 
+# alignment and count matrix generation.
+pbmc.data <- Read10X(data.dir = "data/filtered_gene_bc_matrices/hg19/")
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+
+# To free up memory, you can remove these from the environment.
+remove(pbmc.data)
+remove(pbmc)
+
+## Load in pre-made Seurat object from Farbehi et al. 2019----
+
+# The authors provided their count matrix data as a tab delimited,
+# text file (TIP_ShamVsMI_days3_7.txt). However, reading in and
+# creating a Seurat object from a large (non-sparse) matrix requires a lot of memory.
+# To speed things up we have prepared the seurat object before hand, 
+# which require less memory to read into R. 
+load("data/TIP_premade_object.Rdata")
+
+# If you would like to read in the published data yourself, de-comment the commands below.
+# memory.limit(size = 20000)
+# tip.data <- read.delim("data/TIP_ShamVsMI_days3_7.txt") 
+# TIP <- CreateSeuratObject(tip.data, min.cells = 10, min.genes = 200, project = "TIP")
+# remove(tip.data)
+
+## Seurat object exploration----
+
+# The Seurat object we have created from the published data is called "TIP",
+# (total interstitial population), if you simply enter this into your console, 
+# you will receieve the information on the object. Features are genes, samples are cells.
+TIP
+dim(TIP) # get the dimensions of the object
+head(rownames(TIP)) # returns the first 5 rows (genes)
+head(colnames(TIP)) # returns the first 5 columns (barcodes/cells)
+DefaultAssay(TIP) # find the current default assay
+head(Idents(TIP)) # find the current identities 
+
+## Metadata exploration----
+
+# The metadata slot is a useful place to store cell-level
+# information and can be accessed multiple ways.
+head(TIP@meta.data)
+head(TIP[[]])
+tail(TIP@meta.data)
+
+## Extracting timepoint information----
+
+# You can see the cell barcodes contain information about 
+# which timepoint/surgery they belong to. With the following
+# code we extract that pattern, and add it to a new column 
+# in the metadata titled "Timepoint".
+TIP@meta.data$Timepoint <- ifelse(grepl("Sham", rownames(TIP@meta.data)), "Sham",
+                                  ifelse(grepl("MI_day3", rownames(TIP@meta.data)), "MI_day3",
+                                         ifelse(grepl("MI_day7", rownames(TIP@meta.data)),
+                                                "MI_day7", "NA"))) 
+head(TIP@meta.data)
+unique(TIP@meta.data$Timepoint)
+
+# See how many cells are in each group
+table(TIP@meta.data$Timepoint) 
+
+## Quality control exploration----
+
+# Add the percentage of counts mapped to the mitochondrial genome to the metadata
+TIP[["percent.mt"]] <- PercentageFeatureSet(TIP, pattern = "^mt-")
+head(TIP@meta.data)
+
+# Note how many cells we have before filtering.
+Cells_preQC <- length(colnames(TIP))
+Cells_preQC
+
+# Plot the number of genes detected, counts and percentage of mitochondrial reads.    
+VlnPlot(TIP, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)  
+
+# Visualize low quality cells and doublets (outliers).
+p1 <- FeatureScatter(TIP, feature1= "nCount_RNA", feature2= "percent.mt", cols = "black") + 
+   NoLegend() + xlab("nUMI") + ylab("%mito")
+p2 <- FeatureScatter(TIP, feature1= "nCount_RNA", feature2= "nFeature_RNA", cols = "black") + 
+   NoLegend() + xlab("nUMI") + ylab("nGene")
+p1 + p2
+
+# Set the "group.by" argument to a metadata column to separate the data further.
+VlnPlot(TIP, features = "nFeature_RNA", group.by = "Timepoint") 
+
+# You'll notice the order of the timepoints is not ideal. 
+# This is a common problem when visualizing results. To remedy this, 
+# we can re-order the factor levels of the data in question.
+TIP@meta.data$Timepoint <- factor(TIP@meta.data$Timepoint, levels = c("Sham", "MI_day3", "MI_day7"))
+VlnPlot(TIP, features = "nFeature_RNA", group.by = "Timepoint") 
+
+# Vizualize the number of genes detected, counts and mitochondrial reads across timepoints.   
+VlnPlot(TIP, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), group.by = "Timepoint", ncol = 3)  
+
+## Quality control filtering----
+
+# To avoid including stressed/dying cells or doublets
+# in the downstream clustering, we subset the object 
+# to include cells that have more than 200 unique genes, 
+# but no more than 4000, as well as fewer than 5% of 
+# the reads mapped to the mitochondrial genome. These 
+#are typical cutoffs, but you should always evaluate 
+# if they make sense for your dataset. Filtering out 
+#cells with expression of more than 4000 unique genes 
+# is a quick way to remove possible doublets. It should
+# be noted there are more elegant ways of removing doublets 
+#(e.g. DoubletFinder), but are outside the scope of this tutorial.
+TIP <- subset(TIP, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & percent.mt < 5)
+VlnPlot(TIP, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), group.by = "Timepoint", ncol = 3)
+
+# Then we can evaluate how many cells were kept. This 
+# is good information to see whether or not your filters
+# were too harsh, or whether your data set contains a 
+# high amount of poor quality cells.
+dim(TIP)
+Cells_postQC <- length(colnames(TIP))
+(Cells_postQC/Cells_preQC)*100
+
+## SCTransform (~6 min)----
+
+# SCTransform will normalize, scale, and select 
+# highly variable features. Upon completion it 
+# will create a corrected count matrix that can be used for PCA. 
+TIP <- SCTransform(TIP, verbose = T)
+
+# Active assay will have changed to SCT
+TIP 
+
+# SCTransform creates corrected values for nCount and nFeature
+head(TIP@meta.data) 
+
+# We then plot the variable genes, and label the top 15.
+LabelPoints(plot = VariableFeaturePlot(TIP), points = head(VariableFeatures(TIP), 15), repel = TRUE)
+
+## PCA----
+
+# Now we use principle components analysis 
+# to reduce the dimensionality of the data.
+TIP <- RunPCA(TIP, npcs = 60)
+
+# Explore the PC loadings and embeddings. Loadings 
+# are the weights that transform predictors (i.e. genes) 
+#into a component. Embeddings are the coordinates 
+# that each cell takes on for each component.
+Loadings(TIP, reduction = "pca")[1:5,1:5] 
+
+# Shows loading of top ranked genes for each PC
+VizDimLoadings(TIP, dims = 1:2, reduction = "pca")  
+
+# Now we can explore the embeddings, which are the locations of each cell in PC space
+Embeddings(TIP, reduction = "pca") [1:5, 1:5]
+
+# Finding the first cell, PC1=-31.88, PC2=-18.87.
+LabelPoints(plot = DimPlot(TIP, reduction = "pca", dims = 1:2), 
+            points = "AAACCTGAGAACAATC_Sham", repel = T, xnudge = -15, ynudge = 30)
+
+# To determine how many PCs to use for clustering, 
+# we can evaluate a scree plot. As the curve levels off, 
+# the PCs are no longer capturing useful variation. 
+# Ideally we choose the number of principle components 
+# at the break of the elbow. This can be subjective, try 
+# multiple iterations of clustering with different numbers of PCs. 
+# Can also use JackStraw() to compute number of "significant" PCs
+ElbowPlot(TIP, ndims = 60) 
+
+# Another way to determine if PCs are capturing variation is to 
+# plot them against each other, if a spherical shape forms, the PCs 
+# are likely not capturing variation, and are not useful. 
+p1 <- DimPlot(TIP, reduction = "pca", dims = 10:11) + NoLegend()
+p2 <- DimPlot(TIP, reduction = "pca", dims = 20:21) + NoLegend()
+p3 <- DimPlot(TIP, reduction = "pca", dims = 30:31) + NoLegend()
+p4 <- DimPlot(TIP, reduction = "pca", dims = 40:41) + NoLegend()
+p5 <- DimPlot(TIP, reduction = "pca", dims = 50:51) + NoLegend()
+p6 <- DimPlot(TIP, reduction = "pca", dims = 59:60) + NoLegend()
+par(mfrow= c(3,3))
+p1 + p2 + p3 + p4 + p5 + p6
+
+# Heatmaps are also useful, here we select only 500 cells 
+# from the dataset and display scores for a range of PCs.
+DimHeatmap(TIP, dims = 1:10, cells = 500, balanced = T)
+DimHeatmap(TIP, dims = 30:40, cells = 500, balanced = T) #33rd PC seems to be reasonable cut off
+DimHeatmap(TIP, dims = 50:60, cells = 500, balanced = T)
+
+## UMAP----
+
+# RunUMAP() runs the Uniform Manifold Approximation and Projection
+# (UMAP) dimensional reduction technique. This helps us visualize 
+# our data in 2D. By running `DimPlot()` we can plot our cells, 
+# colored by their current identity class.
+TIP <- RunUMAP(TIP, reduction = "pca", dims = 1:33, verbose=F) # Use 33 PCs as determined above "dims=1:33"
+DimPlot(TIP)
+
+# Explore the embeddings and locate the first cell.
+head(Embeddings(TIP, reduction = "umap"))
+LabelPoints(plot = DimPlot(TIP), points = "AAACCTGAGAACAATC_Sham", 
+            repel = T, xnudge = -15, ynudge = 30)
+
+## Clustering---- 
+
+# To cluster the data, we use the same number of PCs
+# we used for the UMAP embedding. Be mindful of the 
+# resolution parameter, this will dramatically effect 
+# the number of clusters that are generated. It's wise 
+# to explore a number of different clustering iterations 
+# using different resolutions. Be sure to verify they 
+# actually represent unique cell identities!  
+TIP <- FindNeighbors(TIP, dims = 1:33, verbose = T)
+TIP <- FindClusters(TIP, resolution = 0.5, verbose = T)
+
+# The new default identity for the Seurat object 
+# will be set to most recent FindClusters() result.
+# This is also "seurat_clusters" in the metadata.
+head(TIP@meta.data)
+DimPlot(TIP, label = T) 
+
+# To see active ident, or use TIP@active.ident
+head(Idents(TIP)) 
+
+## Cluster markers (~45 min)----
+
+# It is unclear whether cluster markers should 
+# be identified using the SCT or RNA assay, however 
+# since it is a type of differential gene expression analysis. 
+# I believe it is safer to preform cluster marker 
+# identification on the RNA assay, based on the following references.  
+# https://www.embopress.org/doi/full/10.15252/msb.20188746   
+# https://github.com/satijalab/seurat/discussions/4032   
+
+# First, we have to normalize and scale the data in the RNA assay before we can use it.
+DefaultAssay(TIP) <- "RNA" #changing the default assay to "RNA" assay
+TIP <- NormalizeData(TIP, normalization.method = "LogNormalize", scale.factor = 10000, verbose = T)
+all_genes <- rownames(TIP)
+TIP <- ScaleData(TIP, features = all_genes, verbose = T)
+
+# Identify cluster markers. Note when the `only.pos` 
+# argument is set to TRUE, it will only return positive 
+# marker genes. This is recommended for finding cluster 
+# biomarkers, but for normal differential gene expression 
+# analysis, you would want to find both positive and negative 
+#DEG. In that case, you would set `only.pos = F`.
+cluster_markers <- FindAllMarkers(TIP, 
+                                  assay = "RNA",
+                                  verbose = T,
+                                  only.pos = T,
+                                  base = 2)
+head(cluster_markers)
+write.csv(cluster_markers, file = "results/cluster_markers.csv", row.names = F) # saves our results
+
+# Show the top 2 cluster markers.
+top2 <- cluster_markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+top2
+
+## Explore gene expression----
+
+DimPlot(TIP, label = T)
+DimPlot(TIP, group.by = "Timepoint")
+FeaturePlot(TIP, features = "Col1a1")
+FeaturePlot(TIP, features = c("Pecam1", "Ptprc", "Col1a1"))
+VlnPlot(TIP, features = "Adgre1")
+
+## Heatmap (~2 min)---- 
+
+# Because the number of clusters generated is 
+# dependent on the resolution parameter in the 
+# FindCluster() function, it is important to check 
+# their validity as transcriptionally unique cell 
+# identities. One way of checking this is to 
+# visualize your cluster marker genes in a heatmap.
+top30 <- cluster_markers %>% group_by(cluster) %>% top_n(n = 30, wt = avg_log2FC)
+DoHeatmap(TIP, features = top30$gene) + NoLegend()
+
+## Post-clustering quality control----
+
+# Check for clusters dominated by high mitochondrial reads or low gene expression
+head(TIP@meta.data)
+FeaturePlot(TIP, features = "percent.mt", label = T)
+VlnPlot(TIP, features = "percent.mt")
+VlnPlot(TIP, features = "nFeature_RNA")
+VlnPlot(TIP, features = "nCount_RNA")
+
+## Calculate average gene expression----
+
+average_expression <- AverageExpression(TIP, assays = "RNA")
+
+# Save your results
+write.csv(average_expression$RNA, file = "results/average_expression.csv") 
+
+
+## Differential gene expression (DEG)----
+
+# DEG analysis can be performed on any set of groups you chose. 
+# Below we find differentially expressed genes between clusters 5 and 0.
+Cluster_0_v_5 <- FindMarkers(TIP, ident.1 = "5", ident.2 = "0", verbose = T)
+head(Cluster_0_v_5, n = 20)
+VlnPlot(TIP, features = "Gsn", idents = c("0", "5"))
+VlnPlot(TIP, features = "Postn", idents = c("0", "5"))
+FeaturePlot(TIP,  features = "Postn", label = T)
+
+# We also have different treatments, lets use the "Timepoint" 
+# column in the metadata to calculate differentially expressed 
+# genes between MI and Sham in cluster 4.
+head(TIP@meta.data)
+Cluster_4_MI_v_Sham <- FindMarkers(TIP, 
+                                   subset.ident = "4",
+                                   group.by = "Timepoint",
+                                   ident.1 = c("MI_day7", "MI_day3"),
+                                   ident.2 = "Sham",
+                                   verbose = T)
+head(Cluster_4_MI_v_Sham, n = 20)
+VlnPlot(TIP, idents = "4", features = "Dcn", group.by = "Timepoint")
+
+## Calculate and plot gene signatures----
+
+# Another useful method is to plot several genes 
+# that are a part of a common topic or "signature". 
+# For example, we can read in a list of genes that
+# make up the gene ontology term "Extracellular Matrix".
+# And score each cell on the aggregate expression of
+# this list of genes with AddModuleScore(). 
+Gene_ontology <- read_excel("data/gene_signatures.xlsx", sheet = "Gene_ontology")
+head(Gene_ontology$`extracellular_matrix_GO:0031012`)
+ECM_genes <- unique(Gene_ontology$`extracellular_matrix_GO:0031012`)
+TIP <- AddModuleScore(TIP,
+                      features = list(ECM_genes),
+                      ctrl = 50,
+                      name = "ECM")
+
+# This new gene signature is written into the metadata, 
+# by default there is a number added (ECM1)
+head(TIP@meta.data) 
+FeaturePlot(TIP, features = "ECM1") + ggtitle("Extracellular matrix signature")
+
+## Compositional analysis----
+
+# Often an interesting question is whether 
+# or not a treatment or timepoint changes the
+# abundance of a certain cell identitiy. Here 
+# is a way to tabulate the cluster compositions.
+# Statistically testing these for significant 
+# changes is another issue. One such approach, 
+# termed "Differential proportion analysis" is 
+# described in the methods section of Farbehi et al. 2019,
+# I encourage you to read it.
+head(Idents(TIP)) 
+table(Idents(TIP), TIP$Timepoint) 
+(prop.table(table(Idents(TIP), TIP$Timepoint), margin = 2))*100 
+cluster_composition <- (prop.table(table(Idents(TIP), TIP$Timepoint), margin = 2))*100
+cluster_composition <- as.data.frame(cluster_composition)
+colnames(cluster_composition) <- c("Cluster", "Timepoint", "Percent")
+head(cluster_composition)
+write.csv(cluster_composition, file = "results/cluster_composition.csv", row.names = F)
+
+## Annotation----
+
+# We can annotate the dataset by renaming the 
+# identities and storing them in the metadata. 
+# For now we will use German cities, but real 
+# cluster annotation requires you to look into 
+# the expression profile of each cluster to infer 
+# a cellular "identity".
+head(Idents(TIP)) # be sure the current default identity is the cluster numbers you wish to rename
+Idents(TIP) <- "seurat_clusters" # set the identity to seurat_clusters if not
+DimPlot(TIP, label = T)
+TIP <- RenameIdents(TIP, 
+                    "0"="Berlin",
+                    "1"="Hamburg", 
+                    "2"="München",
+                    "3"="Köln",
+                    "4"="Frankfurt", 
+                    "5"="Stuttgart", 
+                    "6"="Düsseldorf",
+                    "7"="Dortmund",
+                    "8"="Essen", 
+                    "9"="Leipzig",
+                    "10"="Bremen", 
+                    "11"="Dresden",
+                    "12"="Hannover",
+                    "13"="Nuremberg",
+                    "14"="Duisburg",
+                    "15"="Bochum",
+                    "16"="Wuppertal",
+                    "17"="Bielefeld",
+                    "18"="Bonn",
+                    "19"="Münster")
+DimPlot(TIP, label = T)
+
+# New identities are only temporary, they are not written into metadata!
+head(TIP@meta.data)
+
+# Save new identities as "annotation_1" column in metadata
+TIP@meta.data$annotation_1 <- (Idents(TIP)) 
+head(TIP@meta.data)
+
+## Exporting figures----
+
+# Export the un-annotated clusters as pdf
+Idents(TIP) <- "seurat_clusters"  
+pdf(file = "results/TIP_DimPlot.pdf", useDingbats = F, height = 5, width = 6)
+DimPlot(TIP, label = T)
+dev.off()
+
+# Export the annotated clusters as a tiff
+Idents(TIP) <- "annotation_1" 
+tiff(filename = "results/TIP_DimPlot_annotation_1.tif", 
+     height = 1500, 
+     width = 1900, 
+     units = "px",
+     res = 300)
+DimPlot(TIP, label = T, group.by = "annotation_1", repel = T)
+dev.off()
+
+## Save your clustered and annotated object (~5 min)----
+
+save(TIP, file = "results/TIP.Rdata")
+
+
+

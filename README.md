@@ -1,0 +1,3 @@
+# scRNAseq-practical-course
+
+The aim of this course is to introduce single-cell RNA sequencing (scRNAseq) data analysis to individuals with little or no experience with scRNAseq or R programming. Our intent is to provide foundational knowledge that can be expanded to other computational methods or simply help individuals better critically evaluate scRNAseq studies. We will provide a short overview of scRNAseq technologies, experimental design and typical workflows. Using Seurat, a popular single-cell genomics toolkit, we will guide students through the basic analysis steps, starting from the expression count matrix to cluster annotation.
