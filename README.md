@@ -6,7 +6,7 @@ This repository holds a portion of the materials for the Practical Course: for t
 Practical Course: Single-Cell RNA Sequencing Data Analysis
 13.01.2022 - 14.01.2022, 09:00 Uhr - 17:00 Uhr
 
-![Course syllabus](https://htmlpreview.github.io/?https://github.com/danieljgorski/scRNAseq-practical-course/blob/main/Course-syllabus.html)
+[Course syllabus](https://htmlpreview.github.io/?https://github.com/danieljgorski/scRNAseq-practical-course/blob/main/Course-syllabus.html)
 Link IRTG
 Link SFB
 
