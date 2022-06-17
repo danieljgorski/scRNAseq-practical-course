@@ -50,3 +50,6 @@ git clone https://github.com/danieljgorski/scRNAseq-practical-course.git
 6. Open `Lab-2-Analysis-of-Farbehi-et-al-2019.R` and follow along with the commented steps.
 
 ### Examples
+<p align="center">
+  <img src="/examples/overview.jpg" width="1000">
+</p>
