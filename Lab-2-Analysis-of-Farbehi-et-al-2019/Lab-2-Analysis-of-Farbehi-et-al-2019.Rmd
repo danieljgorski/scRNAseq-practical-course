@@ -1,6 +1,6 @@
 ---
 title: "Lab 2 - Analysis of Farbehi et al. 2019"
-author: "Daniel J Gorski"
+author: "Daniel J Gorski, Ph.D."
 date: "September 2021"
 output: 
   html_document :
@@ -348,27 +348,30 @@ write.csv(average_expression$RNA, file = "results/average_expression.csv") # sav
 
 # Differential gene expression
 
-DEG analysis can be performed on any set of groups you chose. Below we find differentially expressed genes between clusters 5 and 0.
+DEG analysis can be performed on any set of groups you chose. Below we find differentially expressed genes between clusters 7 and 0.
 
 ```{r}
-Cluster_0_v_5 <- FindMarkers(TIP, ident.1 = "5", ident.2 = "0")
-head(Cluster_0_v_5, n = 20)
-VlnPlot(TIP, features = "Gsn", idents = c("0", "5"))
-VlnPlot(TIP, features = "Postn", idents = c("0", "5"))
-FeaturePlot(TIP,  features = "Postn", label = T)
+Cluster_0_v_7 <- FindMarkers(TIP, ident.1 = "7", ident.2 = "0")
+head(Cluster_0_v_7, n = 20)
+VlnPlot(TIP, features = "Gsn", idents = c("0", "7"))
+VlnPlot(TIP, features = "Postn", idents = c("0", "7"))
+FeaturePlot(TIP,  features = c("Gsn", "Postn"), label = T)
 ```
 
-We also have different treatments, lets use the "Timepoint" column in the metadata to calculate differentially expressed genes between MI and Sham in cluster 4.
+We also have different treatments, lets use the "Timepoint" column in the metadata to calculate differentially expressed genes between MI day 7 and day 3 in cluster 7.
 
 ```{r}
 head(TIP@meta.data)
-Cluster_4_MI_v_Sham <- FindMarkers(TIP, 
-                                        subset.ident = "4",
-                                        group.by = "Timepoint",
-                                        ident.1 = c("MI_day7", "MI_day3"),
-                                        ident.2 = "Sham")
-head(Cluster_4_MI_v_Sham, n = 20)
-VlnPlot(TIP, idents = "4", features = "Dcn", group.by = "Timepoint")
+Cluster_7_MI<- FindMarkers(TIP,
+                        subset.ident = "7",
+                        group.by = "Timepoint",
+                        ident.1 = "MI_day7",
+                        ident.2 = "MI_day3")
+head(Cluster_7_MI, n = 20)
+VlnPlot(TIP,
+        idents = "7",
+        features = "Col3a1",
+        group.by = "Timepoint")
 ```
 
 # Gene signatures
@@ -430,7 +433,9 @@ TIP <- RenameIdents(TIP,
                     "16"="Wuppertal",
                     "17"="Bielefeld",
                     "18"="Bonn",
-                    "19"="Münster")
+                    "19"="Münster",
+                    "20" = "Karlsruhe",
+                    "21" = "Mannheim")
 DimPlot(TIP, label = T)
 head(TIP@meta.data) # New identities are only temporary, they are not written into metadata
 TIP@meta.data$annotation_1 <- (Idents(TIP)) # save new identities as "annotation_1" column in metadata
@@ -442,7 +447,7 @@ head(TIP@meta.data)
 Export the un-annotated clusters as pdf
 
 ```{r, message=FALSE, warning=FALSE}
-Idents(TIP) <- "seurat_clusters" #switch back to the numbered clusters 
+Idents(TIP) <- "seurat_clusters" # switch back to the numbered clusters 
 pdf(file = "results/TIP_DimPlot.pdf", useDingbats = F, height = 5, width = 6)
 DimPlot(TIP, label = T)
 dev.off()
@@ -451,10 +456,10 @@ dev.off()
 Export the annotated clusters as a tiff
 
 ```{r, message=FALSE, warning=FALSE}
-Idents(TIP) <- "annotation_1" #switch to our annotation
+Idents(TIP) <- "annotation_1" # switch to our annotation
 tiff(filename = "results/TIP_DimPlot_annotation_1.tif", 
      height = 1500, 
-     width = 1900, 
+     width = 2500, 
      units = "px",
      res = 300)
 DimPlot(TIP, label = T, group.by = "annotation_1", repel = T)
